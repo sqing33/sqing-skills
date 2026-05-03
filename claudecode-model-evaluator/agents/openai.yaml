@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude Code 模型评估器"
+  short_description: "对比多个 Claude Code 模型后端的编码表现"
+  default_prompt: "使用 $claudecode-model-evaluator 将同一个编码任务交给多个 Claude Code 模型后端运行，并生成中文对比报告。"

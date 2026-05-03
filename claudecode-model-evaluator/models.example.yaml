@@ -1,0 +1,41 @@
+# 将此文件复制到 `models.yaml` 再运行评估器。
+# 真实的 API 密钥只能放在 `models.yaml` 中，不要放在此示例文件中。
+
+models:
+  - id: minimax-m27-highspeed
+    label: MiniMax-M2.7-highspeed
+    launcher:
+      # 原生 Claude Code CLI 启动器
+      type: claude-cli
+      # 真实的网关模型 ID
+      model: MiniMax-M2.7-highspeed
+      # 此次运行的最大 Claude 轮次
+      max_turns: 25
+      extra_args: []
+    env:
+      ANTHROPIC_BASE_URL: https://api.minimaxi.com/anthropic
+      ANTHROPIC_API_KEY: your-minimax-api-key
+    timeout_minutes: 20
+    budget_usd: 3.0
+
+  - id: kimi-k25
+    label: Kimi-K2.5
+    launcher:
+      type: claude-cli
+      model: kimi-k2.5
+      max_turns: 25
+      extra_args: []
+    env:
+      ANTHROPIC_BASE_URL: https://api.kimi.com/coding
+      ANTHROPIC_API_KEY: your-kimi-api-key
+    timeout_minutes: 20
+    budget_usd: 3.0
+
+execution:
+  # 1 表示串行执行；更大的数字允许并行运行
+  max_parallel: 3
+  # 目标仓库支持时，优先使用独立的 git worktree，不支持则回退到复制的方式
+  workspace_mode: git-worktree
+
+rubric:
+  profile: coding-default

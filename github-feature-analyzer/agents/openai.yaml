@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub 功能实现分析器"
+  short_description: "按功能分析 GitHub 仓库实现机制"
+  default_prompt: "使用 $github-feature-analyzer 分析公开 GitHub 仓库的功能实现，按 README 优先、机制优先和严格 path:line 证据生成中文报告。"

@@ -1,0 +1,29 @@
+请使用 github-feature-analyzer skill 分析仓库。
+
+repo_url: https://github.com/<owner>/<repo>
+ref: main
+language: zh
+depth: standard
+agent_mode: multi
+max_parallel_agents: auto
+
+features:
+- <feature-1>
+- <feature-2>
+
+reference_lookup:  # optional
+  enabled: false
+  query: "<reference question for historical reports>"
+  mode: semi  # compact | semi | full
+  repo_filter:
+  - <owner-repo>
+
+说明：
+- 默认报告采用三段式结构：
+  1) 项目参数与结构解析；
+  2) 面向人的功能说明（功能作用 / 特殊功能 / 实现想法）；
+  3) 面向 AI 的实现细节与证据链（控制流、数据流、状态生命周期、失败恢复、并发时序）。
+- README-first、项目特点机制分析、分层多子代理、证据追踪规则均已内置。
+- 证据与推断规则保持不变：关键结论需尽量给出 `path:line`；无直接证据必须标注 `inference`；保留 `confidence`。
+- 需要复用历史分析结果时，设置 `reference_lookup.enabled=true`，skill 会先通过 `ensure_uv_unix.sh/setup_reference_venv.sh` 准备 UV 环境，再执行 `reference_retrieval_uv.sh`。
+- 仅需填写仓库信息和你关心的 feature 问题。
