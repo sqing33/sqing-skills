@@ -1,0 +1,3 @@
+interface:
+  display_name: "Tmux Claude Parallel Workers"
+  short_description: "Lead agent plans and splits work; multiple Claude Code child workers implement in tmux"

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Git Finalizer"
+  short_description: "Use a fast Claude Code worker to test, review git diff, generate commit info, and commit safely"
+  default_prompt: "Finalize the current git changes: run checks, review the diff, generate a commit message, and commit only if validation passes."
+

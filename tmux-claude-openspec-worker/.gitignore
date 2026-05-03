@@ -1,0 +1,8 @@
+.state/
+.logs/
+.results/
+.reports/
+.worktree-tmux-orch/
+config.toml
+scripts/__pycache__/
+*.pyc

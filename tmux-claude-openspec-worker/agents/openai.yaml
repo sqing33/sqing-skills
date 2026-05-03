@@ -1,0 +1,3 @@
+interface:
+  display_name: "Tmux Claude OpenSpec Worker"
+  short_description: "Lead agent manages OpenSpec; one Claude Code worker implements the change in tmux"

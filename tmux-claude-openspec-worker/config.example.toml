@@ -1,0 +1,17 @@
+selected_model = "minimax"
+
+[profiles.minimax]
+base_url = ""
+# Reused for both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN.
+api_key = ""
+model = "MiniMax-M2.7-highspeed"
+
+[profiles.glm_5_1]
+base_url = ""
+api_key = ""
+model = "glm-5.1"
+
+[profiles.kimi_k2_5]
+base_url = ""
+api_key = ""
+model = "kimi-k2.5"
