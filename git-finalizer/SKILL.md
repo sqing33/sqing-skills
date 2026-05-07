@@ -76,7 +76,9 @@ bash skills/git-finalizer/scripts/git-finalizer.sh <command> [args...]
 - `ANTHROPIC_DEFAULT_SONNET_MODEL`
 - `ANTHROPIC_DEFAULT_OPUS_MODEL`
 
-默认 `use_api_key_helper = true`。runner 会在 `.state/<run_id>/` 下写入本轮专用的 `api-key-helper.sh`，并通过 Claude Code `--settings` 传入。这个方式会同时发送 `X-Api-Key` 和 `Authorization: Bearer`，更适合兼容 Claude Code 的鉴权路径。
+runner 会在 `.state/<run_id>/` 下写入本轮专用的 `claude-settings.json`，并通过 Claude Code `--settings <file>` 传入。该 settings 文件会显式包含当前 profile 的 `env`（`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 等），避免被用户全局 `~/.claude/settings.json` 里的默认模型或 API 配置覆盖。
+
+默认 `use_api_key_helper = true`。runner 还会写入本轮专用的 `api-key-helper.sh` 并在 settings 中声明 `apiKeyHelper`，以兼容 Claude Code 的动态 key 读取路径。
 
 如果设置为 `false`，则回退为直接注入 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` 环境变量。
 

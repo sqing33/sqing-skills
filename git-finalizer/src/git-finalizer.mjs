@@ -301,6 +301,7 @@ function workerPaths(runId) {
     debug: path.join(LOG_DIR, runId, "worker.debug.log"),
     done: path.join(LOG_DIR, runId, "worker.done"),
     keyHelper: path.join(STATE_DIR, runId, "api-key-helper.sh"),
+    settings: path.join(STATE_DIR, runId, "claude-settings.json"),
   };
 }
 
@@ -390,9 +391,7 @@ function buildClaudeCommand(root, state, paths, options = {}) {
     "--debug-file",
     paths.debug,
   ];
-  if (useApiKeyHelper && profile.api_key) {
-    args.push("--settings", JSON.stringify({ apiKeyHelper: paths.keyHelper }));
-  }
+  if (fs.existsSync(paths.settings)) args.push("--settings", paths.settings);
   if (profile.model) args.push("--model", profile.model);
   if (persistClaudeSession) {
     const sessionId = options.ignoreSavedSession ? "" : String(loadProjectState(root).claude_session_id || "").trim();
@@ -413,6 +412,9 @@ function writeWorkerScript(state, root) {
   if (useApiKeyHelper && profile.api_key) {
     fs.writeFileSync(paths.keyHelper, `#!/usr/bin/env bash\nprintf '%s' ${shellQuote(profile.api_key)}\n`, { mode: 0o700 });
   }
+  const settings = { env: claudeEnv(profile, true) };
+  if (useApiKeyHelper && profile.api_key) settings.apiKeyHelper = paths.keyHelper;
+  fs.writeFileSync(paths.settings, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
   const cmd = buildClaudeCommand(root, state, paths);
   const retryCmd = buildClaudeCommand(root, state, paths, { ignoreSavedSession: true });
   const savedSessionId = String(loadProjectState(root).claude_session_id || "").trim();
