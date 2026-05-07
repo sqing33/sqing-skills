@@ -44,15 +44,17 @@ bash skills/git-finalizer/scripts/git-finalizer.sh <command> [args...]
 4. tmux 会话中会用所选高速模型启动 Claude Code。
 5. 如果该项目已有绑定的 Claude Code session，则恢复该 session；否则首次运行会创建 session 并保存 `session_id`。
 6. 运行 `status` 或 `inspect` 查看 worker 结果。
-7. 运行 `finalize`，只有 worker 校验通过且当前 diff 未变化时，才会自动 stage 并 commit。
+7. 需要提交时显式运行 `finalize`；只有 worker 校验通过且当前 diff 未变化时，才会 stage 并 commit。
 8. 如果临时 tmux 会话仍然存在，可以运行 `close` 关闭；这不会清理 Claude Code session 上下文。
 
 ## Claude Session 复用
 
 - tmux 会话是每次运行临时创建的。
-- Claude Code 上下文通过项目绑定的 Claude session id 复用。
-- 项目绑定来自 git 仓库根目录路径的 hash。
-- 默认使用稳定的 `claude --session-id <uuid>`，因此 tmux 可以临时关闭，而 Claude Code 仍保留该项目上下文。
+- 默认 `persist_claude_session = true`，同一 git 项目会复用同一个 Claude Code 对话。
+- 第一轮不传固定 session id，让 Claude Code 自己创建真实 session，并保存返回的 `session_id`。
+- 后续运行使用 `--resume <session_id>` 回到同一个对话；不要用 repo path hash 生成固定 `--session-id`。
+- 如果已保存 session 不存在、损坏或无法恢复，会清空该项目 session 并自动重试一次新对话，成功后保存新的真实 `session_id`。
+- 同一个 Claude Code session 不能并发占用；如果前一轮还在运行，下一轮需要等待或关闭临时 tmux 会话后再启动。
 - 如果设置 `persist_claude_session = false`，则改用 `--no-session-persistence`。
 - 如果本机 Claude CLI 需要特殊启动方式，可以设置 `GIT_FINALIZER_CLAUDE_CMD` 作为命令模板。
 
@@ -77,6 +79,8 @@ bash skills/git-finalizer/scripts/git-finalizer.sh <command> [args...]
 默认 `use_api_key_helper = true`。runner 会在 `.state/<run_id>/` 下写入本轮专用的 `api-key-helper.sh`，并通过 Claude Code `--settings` 传入。这个方式会同时发送 `X-Api-Key` 和 `Authorization: Bearer`，更适合兼容 Claude Code 的鉴权路径。
 
 如果设置为 `false`，则回退为直接注入 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` 环境变量。
+
+默认 `auto_finalize_after_run = false`。`run` 只负责启动 worker、运行测试/检查并产出结构化结果；提交必须显式调用 `finalize --run <run_id>`。只有明确设置为 `true` 时，worker 返回 `status: done` 后才会自动进入 finalize。
 
 ## Worker 规则
 

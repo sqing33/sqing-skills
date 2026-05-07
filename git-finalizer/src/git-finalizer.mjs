@@ -200,7 +200,7 @@ function loadConfig() {
   if (!profiles[selected]) throw new CmdError(`selected_model ${JSON.stringify(selected)} not found in config profiles`);
   return {
     selected,
-    autoFinalize: raw.auto_finalize_after_run !== false,
+    autoFinalize: raw.auto_finalize_after_run === true,
     persistClaudeSession: raw.persist_claude_session !== false,
     useApiKeyHelper: raw.use_api_key_helper !== false,
     profiles,
@@ -235,6 +235,10 @@ function loadProjectState(root) {
 function saveProjectState(root, data) {
   ensureDirs();
   writeJson(projectStatePath(root), { ...data, repo_root: root, repo_key: projectKey(root), updated_at: isoNow() });
+}
+
+function clearProjectClaudeSession(root) {
+  saveProjectState(root, { ...loadProjectState(root), claude_session_id: "" });
 }
 
 function gitStatusPorcelain(root) {
@@ -300,12 +304,6 @@ function workerPaths(runId) {
   };
 }
 
-function stableProjectSessionId(root) {
-  const hex = crypto.createHash("sha256").update(`git-finalizer:${root}`).digest("hex").slice(0, 32);
-  const variant = ((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
-}
-
 function buildPrompt(state, root) {
   return `你是 git-finalizer 的高速 Claude Code worker。强模型或主 agent 已经完成代码实现，你只负责测试、审查 git diff、生成提交信息。不要修改源码，不要修复问题。
 
@@ -355,7 +353,26 @@ ${RESULT_END}
 `;
 }
 
-function buildClaudeCommand(root, state, paths) {
+function isRecoverableResumeError(text) {
+  const lower = String(text || "").toLowerCase();
+  if (lower.includes("already in use")) return false;
+  return [
+    "no conversation found",
+    "conversation not found",
+    "session not found",
+    "session id not found",
+    "session does not exist",
+    "session file not found",
+    "could not find session",
+    "cannot find session",
+    "failed to resume",
+    "invalid session",
+    "corrupt",
+    "corrupted",
+  ].some((needle) => lower.includes(needle));
+}
+
+function buildClaudeCommand(root, state, paths, options = {}) {
   const profile = activeProfile();
   const { persistClaudeSession, useApiKeyHelper } = loadConfig();
   const envParts = Object.entries(claudeEnv(profile, !useApiKeyHelper)).map(([key, value]) => `${key}=${shellQuote(value)}`);
@@ -369,7 +386,7 @@ function buildClaudeCommand(root, state, paths) {
     "--permission-mode",
     "bypassPermissions",
     "--output-format",
-    "text",
+    persistClaudeSession ? "json" : "text",
     "--debug-file",
     paths.debug,
   ];
@@ -377,8 +394,12 @@ function buildClaudeCommand(root, state, paths) {
     args.push("--settings", JSON.stringify({ apiKeyHelper: paths.keyHelper }));
   }
   if (profile.model) args.push("--model", profile.model);
-  if (persistClaudeSession) args.push("--session-id", stableProjectSessionId(root));
-  else args.splice(2, 0, "--no-session-persistence");
+  if (persistClaudeSession) {
+    const sessionId = options.ignoreSavedSession ? "" : String(loadProjectState(root).claude_session_id || "").trim();
+    if (sessionId) args.push("--resume", sessionId);
+  } else {
+    args.splice(2, 0, "--no-session-persistence");
+  }
   args.push(fs.readFileSync(paths.prompt, "utf8"));
   return [...envParts, args.map(shellQuote).join(" ")].join(" ");
 }
@@ -393,15 +414,31 @@ function writeWorkerScript(state, root) {
     fs.writeFileSync(paths.keyHelper, `#!/usr/bin/env bash\nprintf '%s' ${shellQuote(profile.api_key)}\n`, { mode: 0o700 });
   }
   const cmd = buildClaudeCommand(root, state, paths);
+  const retryCmd = buildClaudeCommand(root, state, paths, { ignoreSavedSession: true });
+  const savedSessionId = String(loadProjectState(root).claude_session_id || "").trim();
+  const { persistClaudeSession } = loadConfig();
+  const shouldAllowResumeRetry = persistClaudeSession && savedSessionId;
   const script = `#!/usr/bin/env bash
 set -u
 cd ${shellQuote(root)}
 LOG_FILE=${shellQuote(paths.log)}
 RAW_FILE=${shellQuote(paths.raw)}
 DONE_FILE=${shellQuote(paths.done)}
+ERR_FILE=${shellQuote(paths.raw)}.stderr
+RETRY_ERR_FILE=${shellQuote(paths.raw)}.retry.stderr
 echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_FILE"
-${cmd} >"$RAW_FILE" 2>>"$LOG_FILE"
+${cmd} >"$RAW_FILE" 2>"$ERR_FILE"
 rc=$?
+cat "$ERR_FILE" >>"$LOG_FILE"
+if [ "$rc" -ne 0 ] && [ ${shouldAllowResumeRetry ? "1" : "0"} -eq 1 ]; then
+  if node ${shellQuote(SCRIPT_PATH)} __is-recoverable-resume-error --file "$ERR_FILE"; then
+    echo "resume_session_recoverable=true" >>"$LOG_FILE"
+    node ${shellQuote(SCRIPT_PATH)} __clear-session --repo-root ${shellQuote(root)} >>"$LOG_FILE" 2>&1
+    ${retryCmd} >"$RAW_FILE" 2>"$RETRY_ERR_FILE"
+    rc=$?
+    cat "$RETRY_ERR_FILE" >>"$LOG_FILE"
+  fi
+fi
 node ${shellQuote(SCRIPT_PATH)} __finish --run ${shellQuote(state.run_id)} --exit-code "$rc" >>"$LOG_FILE" 2>&1
 echo "$rc" >"$DONE_FILE"
 exit "$rc"
@@ -476,7 +513,6 @@ function cmdDoctor() {
   console.log(`use_api_key_helper=${useApiKeyHelper}`);
   console.log(`profiles=${Object.keys(profiles).sort().join(",")}`);
   console.log(`project_claude_session_id=${project.claude_session_id || "-"}`);
-  console.log(`stable_project_session_id=${stableProjectSessionId(root)}`);
   const help = commandExists("claude") ? sh(["claude", "--help"], { check: false }) : { stdout: "", stderr: "" };
   console.log(`claude_resume_support=${(help.stdout + help.stderr).includes("--resume") || (help.stdout + help.stderr).includes("-r")}`);
 }
@@ -555,7 +591,6 @@ function cmdFinish(args) {
   const parsed = parseResultBlock(text);
   writeJson(paths.result, { run_id: args.run, exit_code: args.exitCode, parsed, message_file: paths.message, raw_file: paths.raw, finished_at: isoNow() });
   if (sessionId) saveProjectState(root, { ...loadProjectState(root), claude_session_id: sessionId });
-  else saveProjectState(root, { ...loadProjectState(root), claude_session_id: stableProjectSessionId(root) });
   state.status = TERMINAL_STATUSES.has(parsed.status) ? parsed.status : args.exitCode === 0 ? "done" : "failed";
   state.worker_exit_code = args.exitCode;
   state.parsed_result = parsed;
@@ -694,6 +729,10 @@ function parseArgs(argv) {
       args.run = rest[++i];
     } else if (item === "--exit-code") {
       args.exitCode = Number(rest[++i]);
+    } else if (item === "--file") {
+      args.file = rest[++i];
+    } else if (item === "--repo-root") {
+      args.repoRoot = rest[++i];
     } else {
       throw new CmdError(`unknown argument: ${item}`);
     }
@@ -756,6 +795,15 @@ function main() {
       requireArg(args, "run");
       if (!Number.isFinite(args.exitCode)) throw new CmdError("missing required argument: --exit-code");
       cmdFinish(args);
+      break;
+    case "__is-recoverable-resume-error":
+      requireArg(args, "file");
+      process.exit(isRecoverableResumeError(fs.existsSync(args.file) ? fs.readFileSync(args.file, "utf8") : "") ? 0 : 1);
+      break;
+    case "__clear-session":
+      requireArg(args, "repoRoot");
+      clearProjectClaudeSession(path.resolve(args.repoRoot));
+      console.log("project_claude_session_id=-");
       break;
     default:
       throw new CmdError(`unknown command: ${args.command}`);

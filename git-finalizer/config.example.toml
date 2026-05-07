@@ -1,5 +1,5 @@
 selected_model = "minimax"
-auto_finalize_after_run = true
+auto_finalize_after_run = false
 persist_claude_session = true
 use_api_key_helper = true
 
