@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"claudecode-model-evaluator-go/internal/sanitize"
 )
 
 var ScoreWeights = map[string]float64{"correctness": 40, "scope_control": 20, "recovery": 15, "code_quality": 15, "efficiency": 10}
@@ -147,6 +149,7 @@ func BuildSummary(cfg map[string]any, results []map[string]any, taskMode string,
 }
 
 func BuildReport(summary map[string]any) string {
+	summary = sanitize.AnyMap(summary)
 	results := summary["results"].([]map[string]any)
 	lines := []string{
 		"# Benchmark Report",
@@ -185,6 +188,7 @@ func BuildReport(summary map[string]any) string {
 }
 
 func PersistResults(artifactsDir string, summary map[string]any) error {
+	summary = sanitize.AnyMap(summary)
 	reportText := BuildReport(summary)
 	if err := writeJSON(filepath.Join(artifactsDir, "summary.json"), summary); err != nil {
 		return err
@@ -205,7 +209,7 @@ func PersistResults(artifactsDir string, summary map[string]any) error {
 }
 
 func writeJSON(path string, payload any) error {
-	data, err := json.MarshalIndent(payload, "", "  ")
+	data, err := json.MarshalIndent(sanitize.Value(payload), "", "  ")
 	if err != nil {
 		return err
 	}

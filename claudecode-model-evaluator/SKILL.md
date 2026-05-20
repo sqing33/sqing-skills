@@ -111,6 +111,7 @@ rubric:
 - 优先使用 `execution.workspace_mode: git-worktree` 隔离每个模型的修改。
 - 第三方 Anthropic 兼容网关中，`launcher.model` 必须是网关接受的真实模型 ID，不一定等于展示名。
 - 网关差异放在 `env` 里，优先走原生 `claude-cli` launcher。
+- 运行器写入 `run_spec`、`summary`、`status`、日志和报告前会脱敏常见 key/token/authorization 文本，但仍应避免让模型主动打印环境变量。
 - 只有本地 `claude` CLI 无法直接驱动后端时，才使用备用 `launch_cmd`。
 
 ## Windows 中文输入注意

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"claudecode-model-evaluator-go/internal/sanitize"
 )
 
 const (
@@ -194,10 +196,10 @@ func SpecToMap(cfg *BenchmarkSpec) map[string]any {
 }
 
 func MarshalSpecJSON(cfg *BenchmarkSpec) ([]byte, error) {
-	return json.MarshalIndent(SpecToMap(cfg), "", "  ")
+	return json.MarshalIndent(sanitize.Value(SpecToMap(cfg)), "", "  ")
 }
 func MarshalSpecYAML(cfg *BenchmarkSpec) ([]byte, error) {
-	return []byte(marshalYAML(SpecToMap(cfg), 0) + "\n"), nil
+	return []byte(marshalYAML(sanitize.Value(SpecToMap(cfg)).(map[string]any), 0) + "\n"), nil
 }
 
 func unmarshalStructured(raw []byte, out any) error {
@@ -333,7 +335,7 @@ func modelsToAny(models []ModelSpec) []any {
 			entry["launcher"] = map[string]any{"type": model.Launcher.Type, "model": model.Launcher.Model, "max_turns": model.Launcher.MaxTurns, "extra_args": toAnySlice(model.Launcher.ExtraArgs)}
 		}
 		env := map[string]any{}
-		for k, v := range model.Env {
+		for k, v := range sanitize.StringMap(model.Env) {
 			env[k] = v
 		}
 		entry["env"] = env

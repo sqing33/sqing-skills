@@ -13,6 +13,7 @@ import (
 	"claudecode-model-evaluator-go/internal/claudestream"
 	"claudecode-model-evaluator-go/internal/execx"
 	"claudecode-model-evaluator-go/internal/report"
+	"claudecode-model-evaluator-go/internal/sanitize"
 	"claudecode-model-evaluator-go/internal/spec"
 	"claudecode-model-evaluator-go/internal/workspace"
 )
@@ -301,6 +302,7 @@ func makeTaskPacket(cfg *spec.BenchmarkSpec, model spec.ModelSpec) string {
 		"## Expected Outputs",
 		"- Apply the requested change or complete the requested review.",
 		"- Leave artifacts in the workspace and return a final answer through the launcher.",
+		"- Do not print, inspect, or copy environment variables, API keys, tokens, credentials, or secrets.",
 		"",
 		"## Artifact Contract",
 		fmt.Sprintf("- Model ID: %s", model.ID),
@@ -382,6 +384,9 @@ func writeModelArtifacts(modelDir string, launchResult *execx.Result, changes []
 	if launchResult != nil {
 		stdout, stderr = launchResult.Stdout, launchResult.Stderr
 	}
+	stdout = sanitize.Text(stdout)
+	stderr = sanitize.Text(stderr)
+	patchText = sanitize.Text(patchText)
 	if err := os.WriteFile(filepath.Join(modelDir, "stdout.log"), []byte(stdout), 0o644); err != nil {
 		return err
 	}
@@ -404,7 +409,7 @@ func writeModelArtifacts(modelDir string, launchResult *execx.Result, changes []
 		return err
 	}
 	for name, text := range extraFiles {
-		if err := os.WriteFile(filepath.Join(modelDir, name), []byte(text), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(modelDir, name), []byte(sanitize.Text(text)), 0o644); err != nil {
 			return err
 		}
 	}
@@ -482,7 +487,7 @@ func relativeArtifactPaths(artifactsDir, modelDir string) map[string]any {
 }
 
 func writeJSON(path string, payload any) error {
-	data, err := json.MarshalIndent(payload, "", "  ")
+	data, err := json.MarshalIndent(sanitize.Value(payload), "", "  ")
 	if err != nil {
 		return err
 	}
