@@ -94,6 +94,65 @@ function ensureNoGitOperation(root) {
   if (active.length) throw new CmdError(`refusing to finalize while git operation is active: ${active.join(", ")}`);
 }
 
+function revParse(root, ref) {
+  const proc = sh(["git", "rev-parse", "--verify", ref], { cwd: root, check: false });
+  if (proc.status !== 0) throw new CmdError(`unknown git ref: ${ref}`);
+  return proc.stdout.trim();
+}
+
+function branchExists(root, branch) {
+  return sh(["git", "rev-parse", "--verify", "--quiet", branch], { cwd: root, check: false }).status === 0;
+}
+
+function mergeBase(root, a, b) {
+  return sh(["git", "merge-base", a, b], { cwd: root }).stdout.trim();
+}
+
+function topStashSha(root) {
+  const r = sh(["git", "rev-parse", "--quiet", "--verify", "refs/stash"], { cwd: root, check: false });
+  return r.status === 0 ? r.stdout.trim() : "";
+}
+
+function topStashMessage(root) {
+  const r = sh(["git", "log", "-1", "--format=%s", "refs/stash"], { cwd: root, check: false });
+  return r.status === 0 ? r.stdout.trim() : "";
+}
+
+// safeStashPop pops the top stash only if it matches the expected label we just pushed.
+// This protects pre-existing user stashes when our auto-stash push silently no-op'd
+// (e.g. only submodule/gitlink modifications, which git stash cannot capture).
+function safeStashPop(root, expectedLabel) {
+  const sha = topStashSha(root);
+  if (!sha) return { skipped: true, reason: "no_stash_present" };
+  const subject = topStashMessage(root);
+  if (expectedLabel && subject && !subject.includes(expectedLabel)) {
+    return { skipped: true, reason: `top_stash_mismatch:${subject.slice(0, 64)}` };
+  }
+  const pop = sh(["git", "stash", "pop"], { cwd: root, check: false });
+  if (pop.status !== 0) {
+    return { conflict: true, stderr: pop.stderr || pop.stdout };
+  }
+  return { ok: true };
+}
+
+function gatherMergeContext(root, source, into) {
+  const sourceSha = revParse(root, source);
+  const intoSha = revParse(root, into);
+  const baseSha = mergeBase(root, intoSha, sourceSha);
+  const range = `${baseSha}..${sourceSha}`;
+  const log = sh(
+    ["git", "log", range, "--reverse", "--pretty=format:%h %s%n%b%n---COMMIT-END---"],
+    { cwd: root, check: false },
+  ).stdout.trim();
+  const stat = sh(["git", "diff", "--stat", `${baseSha}...${sourceSha}`], { cwd: root, check: false }).stdout.trim();
+  const nameStatus = sh(["git", "diff", "--name-status", `${baseSha}...${sourceSha}`], { cwd: root, check: false }).stdout.trim();
+  const aheadBehind = sh(
+    ["git", "rev-list", "--left-right", "--count", `${intoSha}...${sourceSha}`],
+    { cwd: root, check: false },
+  ).stdout.trim();
+  return { sourceSha, intoSha, baseSha, log, stat, nameStatus, aheadBehind };
+}
+
 function projectKey(root) {
   return crypto.createHash("sha256").update(root).digest("hex").slice(0, 16);
 }
@@ -306,6 +365,11 @@ function workerPaths(runId) {
 }
 
 function buildPrompt(state, root) {
+  if (state.kind === "merge") return buildMergePrompt(state, root);
+  return buildCommitPrompt(state, root);
+}
+
+function buildCommitPrompt(state, root) {
   return `你是 git-finalizer 的高速 Claude Code worker。强模型或主 agent 已经完成代码实现，你只负责测试、审查 git diff、生成提交信息。不要修改源码，不要修复问题。
 
 本轮任务:
@@ -318,7 +382,7 @@ function buildPrompt(state, root) {
 
 你需要执行:
 1) 阅读 \`git status --short\`、\`git diff --stat\`、\`git diff --cached --stat\`、必要的 \`git diff\` 细节，以及未跟踪文件列表。
-2) 阅读最近提交风格: \`git log -5 --pretty=format:%s\`。
+2) 阅读最近提交完整风格(包含 body): \`git log -10 --pretty=format:'%h %s%n%b%n---END---'\`。先把这些样本看完，再决定 subject 长度、body 是否需要、body 行数与措辞。
 3) 如果 test_cmd 不是 \`-\`，运行该测试/检查命令。
 4) 判断当前改动是否可以提交。测试失败、明显风险、无法理解 diff、或命令无法运行时，返回 \`blocked\` 或 \`failed\`，不要提交。
 5) 生成符合以下规范的 commit_subject 和 commit_body。
@@ -328,10 +392,11 @@ function buildPrompt(state, root) {
 - type 保留英文 Conventional Commits 类型，只能使用 feat、fix、refactor、test、docs、style、chore、perf、revert
 - scope 使用最小有意义模块名；没有明确模块时可以省略括号，使用 <type>: <中文标题>
 - 中文标题必须用中文概括主要改动，不要写英文句子，不要以句号结尾
-- commit_body 必须使用中文 bullet list，每行一个具体修改内容，每行以 "- " 开头
-- commit_body 除代码标识符、文件名、命令、模型名等必要技术字面量外，不要使用英文
-- commit_body 只写修改内容，不写动机长文，不写“由 AI 生成”
-- 极小改动可写 commit_body: -，否则默认写 2 到 6 条中文 bullet
+- commit_body 必须**对齐项目历史 commit 的 body 风格**: 如果历史 body 普遍为空或只有 1-2 行，本次也保持简短甚至直接写 \`-\`；只有当历史普遍写多条 bullet 时才写多条
+- commit_body 描述**功能、行为、用户可见效果或问题根因**，**不要列出文件名、函数名、模块名、import 名、类名、变量名或具体代码层面的实现细节**——这些都能从 diff 看到，不需要在 commit 里复述
+- commit_body 不写动机长文，不写"由 AI 生成"，不写"使用 X helper / 抽出 Y 函数 / 注册 Z 处理器"这种实现拆解
+- commit_body 使用中文，必要技术字面量(命令、配置项、平台名)可保留英文
+- 默认 0 到 3 条 bullet，每行以 "- " 开头；多于 3 条通常说明在复述 diff，应当合并
 
 严格约束:
 - 不要编辑、格式化、重写或删除任何项目文件。
@@ -340,7 +405,7 @@ function buildPrompt(state, root) {
 - 如果测试失败，只报告原因和建议修复方向。
 - diff_hash 字段必须原样返回: ${state.draft_diff_hash}
 
-最终回复末尾必须包含这个结构化块，每个字段单行:
+最终回复末尾必须**原样**包含这个结构化块: 直接以 \`${RESULT_BEGIN}\` 一整行开头、以 \`${RESULT_END}\` 一整行结尾，每个字段单行。**不要把这段包在 markdown 代码块里(\`\`\`)，不要在 \`<<<\` 后面加引号或 heredoc 标记**(例如不要写成 \`<<<'GIT_FINALIZER_RESULT\` 或 \`<<<"GIT_FINALIZER_RESULT"\`)，否则解析器会失败:
 ${RESULT_BEGIN}
 status: done|blocked|failed
 summary: 一句话总结
@@ -349,6 +414,67 @@ changed_files: 主要文件；用分号分隔
 risk_notes: 风险或 none
 commit_subject: <type>(<scope>): <中文标题>
 commit_body: 中文 bullet list；没有则写 -
+diff_hash: ${state.draft_diff_hash}
+${RESULT_END}
+`;
+}
+
+function buildMergePrompt(state, root) {
+  const ctx = state.merge || {};
+  return `你是 git-finalizer 的高速 Claude Code worker。本轮要把分支 \`${state.merge_source}\` 合并进 \`${state.merge_into}\`，你只负责审查将要合并的 commits 与 diff、生成 merge 提交信息。**当前合并尚未执行**，工作树仍处于合并前状态——不要试图修改文件、不要执行 git 写操作。
+
+本轮任务:
+- run_id: ${state.run_id}
+- repo_root: ${root}
+- goal: ${state.goal}
+- test_cmd: ${state.test_cmd}
+- merge_source: ${state.merge_source} (sha=${ctx.sourceSha || "-"})
+- merge_into: ${state.merge_into} (sha=${ctx.intoSha || "-"})
+- merge_base: ${ctx.baseSha || "-"}
+- ahead/behind(into vs source): ${ctx.aheadBehind || "-"}
+
+将要合并的 commits(按时间正序):
+${ctx.log || "(none)"}
+
+将要合并的 diff stat:
+${ctx.stat || "(none)"}
+
+将要合并的 name-status:
+${ctx.nameStatus || "(none)"}
+
+你需要执行:
+1) 阅读上面提供的 commits 列表与 diff stat，理解这次合并到底引入了哪些**功能改动**(不只是文件改了)。
+2) 阅读最近 commit body 风格供参考: \`git log -10 --pretty=format:'%h %s%n%b%n---END---'\`(只读)。
+3) 如有需要，运行只读 git 命令进一步看具体改动: \`git diff ${ctx.baseSha || "<base>"}...${ctx.sourceSha || "<source>"} -- <path>\`。
+4) 如果 test_cmd 不是 \`-\`，运行该命令(可选;通常 merge-finalize 阶段会再次跑;此处可跳过)。
+5) 判断 merge 是否可以提交。如果发现 commits 间互相冲突的迹象、目标分支已经偏离 merge base 太远、或 commits 中夹带了不该合入的内容，返回 \`blocked\` 或 \`failed\`。
+
+合并提交信息规范(**重点**):
+- commit_subject 使用格式: <type>(<scope>): <中文标题>
+- type 保留英文 Conventional Commits 类型(feat / fix / refactor / chore / perf / docs 等)
+- scope 使用最小有意义模块名(如 web / server / bot / scheduler)；跨多个 scope 时可省略括号或选最主要的
+- 中文标题必须用一句话概括"这次合并实际引入了什么"——**禁止使用 "Merge branch X into Y" 这种空标题**；要让人看了标题就知道改了什么功能
+- commit_body 用中文 bullet list 列出本次 merge 引入的**主要功能改动组**(不是文件清单),通常对应 1 条或多条 commit;每条 bullet 描述功能/行为/用户可见效果
+- commit_body 不要罗列文件、函数、变量、import、类名等代码层面细节(这些都在 diff 里)
+- commit_body 不要写"合并某分支""进行了一次合并"这种废话
+- bullet 每行以 "- " 开头；通常 1-5 条；如果 commits 数量多但都属于同一主题可合并为更少的 bullet
+- 标题与正文都使用中文；命令、配置项、平台名等必要技术字面量可保留英文
+
+严格约束:
+- 不要编辑、格式化、重写或删除任何项目文件。
+- 不要执行 git add、git commit、git merge、git reset、git checkout、git restore、git stash 等任何写操作。
+- 当前 worktree 仍在 merge_into 分支上、未执行合并；不要试图"先合并再总结"。
+- 你看到的 commits 与 diff 已经在本 prompt 中提供，可以直接根据它们写提交信息。
+
+最终回复末尾必须**原样**包含这个结构化块: 直接以 \`${RESULT_BEGIN}\` 一整行开头、以 \`${RESULT_END}\` 一整行结尾。**不要把这段包在 markdown 代码块里**，**不要在 \`<<<\` 后加引号或 heredoc 标记**:
+${RESULT_BEGIN}
+status: done|blocked|failed
+summary: 一句话总结这次合并引入的内容
+tests: 测试命令与结果(没跑则写 skipped)
+changed_files: 主要文件;用分号分隔(可只列 top 5)
+risk_notes: 风险或 none
+commit_subject: <type>(<scope>): <中文标题>
+commit_body: 中文 bullet list,描述合并引入的功能改动
 diff_hash: ${state.draft_diff_hash}
 ${RESULT_END}
 `;
@@ -453,12 +579,17 @@ exit "$rc"
 }
 
 function parseResultBlock(text) {
-  const start = text.lastIndexOf(RESULT_BEGIN);
-  if (start < 0) return {};
-  const end = text.indexOf(RESULT_END, start);
+  const beginRe = /<<<\s*['"`]?\s*GIT_FINALIZER_RESULT\s*['"`]?\s*/g;
+  let lastMatch = null;
+  for (const m of text.matchAll(beginRe)) {
+    lastMatch = m;
+  }
+  if (!lastMatch) return {};
+  const bodyStart = lastMatch.index + lastMatch[0].length;
+  const end = text.indexOf(RESULT_END, bodyStart);
   if (end < 0) return {};
   const out = {};
-  for (const line of text.slice(start + RESULT_BEGIN.length, end).trim().split(/\r?\n/)) {
+  for (const line of text.slice(bodyStart, end).trim().split(/\r?\n/)) {
     const idx = line.indexOf(":");
     if (idx > 0) out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
   }
@@ -527,6 +658,7 @@ function cmdDraft(args) {
   if (fs.existsSync(statePath(runId))) throw new CmdError(`run state already exists: ${runId}`);
   const state = {
     run_id: runId,
+    kind: "commit",
     goal: args.goal,
     repo_root: root,
     repo_key: projectKey(root),
@@ -547,7 +679,61 @@ function cmdDraft(args) {
   console.log(`state_file=${statePath(runId)}`);
 }
 
-function cmdRun(args) {
+function cmdMergeDraft(args) {
+  ensureDirs();
+  const root = repoRoot();
+  ensureNoGitOperation(root);
+  if (!args.source) throw new CmdError("missing required argument: --source");
+  if (!branchExists(root, args.source)) throw new CmdError(`source ref not found: ${args.source}`);
+  const into = args.into || currentBranch(root);
+  if (!branchExists(root, into)) throw new CmdError(`target ref not found: ${into}`);
+  if (into === args.source) throw new CmdError(`source and target are the same: ${into}`);
+  const onTarget = currentBranch(root) === into;
+  if (!onTarget && !args.into) {
+    throw new CmdError(`current branch is not ${into}; pass --into <branch> explicitly`);
+  }
+  const ctx = gatherMergeContext(root, args.source, into);
+  if (ctx.sourceSha === ctx.intoSha) throw new CmdError(`nothing to merge: ${args.source} == ${into}`);
+  if (ctx.sourceSha === ctx.baseSha) throw new CmdError(`already merged: ${args.source} is reachable from ${into}`);
+  const runId = args.run || runIdNow();
+  if (fs.existsSync(statePath(runId))) throw new CmdError(`run state already exists: ${runId}`);
+  const goal = args.goal || `merge ${args.source} into ${into}`;
+  const state = {
+    run_id: runId,
+    kind: "merge",
+    goal,
+    repo_root: root,
+    repo_key: projectKey(root),
+    branch: into,
+    merge_source: args.source,
+    merge_into: into,
+    merge: ctx,
+    auto_stash: args.autoStash === true,
+    test_cmd: args.testCmd ?? "-",
+    draft_diff_hash: `merge:${ctx.intoSha}..${ctx.sourceSha}`,
+    status: "planned",
+    created_at: isoNow(),
+    recent_commits: recentCommits(root),
+    events: [],
+  };
+  appendEvent(state, "merge_draft", {
+    source: state.merge_source,
+    into: state.merge_into,
+    base: ctx.baseSha,
+    auto_stash: state.auto_stash,
+  });
+  saveState(state);
+  console.log(`run_id=${runId}`);
+  console.log(`kind=merge`);
+  console.log(`merge_source=${state.merge_source} (${ctx.sourceSha.slice(0, 12)})`);
+  console.log(`merge_into=${state.merge_into} (${ctx.intoSha.slice(0, 12)})`);
+  console.log(`merge_base=${ctx.baseSha.slice(0, 12)}`);
+  console.log(`ahead/behind=${ctx.aheadBehind || "-"}`);
+  console.log(`auto_stash=${state.auto_stash}`);
+  console.log(`state_file=${statePath(runId)}`);
+}
+
+async function cmdRun(args) {
   ensureDirs();
   const state = loadState(args.run);
   const root = path.resolve(state.repo_root);
@@ -556,6 +742,9 @@ function cmdRun(args) {
     console.log(`run_id=${args.run}`);
     console.log(`status=${state.status}`);
     if (state.tmux_session) console.log(`tmux_session=${state.tmux_session}`);
+    if (args.wait && state.status === "running") {
+      await cmdWait({ run: args.run, json: args.json, timeoutSec: args.timeoutSec });
+    }
     return;
   }
   if (!commandExists("tmux")) throw new CmdError("tmux is required");
@@ -579,6 +768,76 @@ function cmdRun(args) {
   console.log(`run_id=${args.run}`);
   console.log("status=running");
   console.log(`tmux_session=${name}`);
+  if (args.wait) {
+    await cmdWait({ run: args.run, json: args.json, timeoutSec: args.timeoutSec });
+  }
+}
+
+function tmuxSessionAlive(name) {
+  if (!name) return false;
+  return sh(["tmux", "has-session", "-t", name], { check: false }).status === 0;
+}
+
+function waitForWorkerDone(state, opts = {}) {
+  const paths = workerPaths(state.run_id);
+  const timeoutMs = Number.isFinite(opts.timeoutSec) && opts.timeoutSec > 0 ? opts.timeoutSec * 1000 : 0;
+  if (fs.existsSync(paths.done)) return Promise.resolve("done_file");
+  fs.mkdirSync(path.dirname(paths.done), { recursive: true });
+  return new Promise((resolve) => {
+    let settled = false;
+    let watcher = null;
+    let poll = null;
+    let timer = null;
+    const finish = (reason) => {
+      if (settled) return;
+      settled = true;
+      try { watcher?.close(); } catch {}
+      if (poll) clearInterval(poll);
+      if (timer) clearTimeout(timer);
+      resolve(reason);
+    };
+    try {
+      watcher = fs.watch(path.dirname(paths.done), () => {
+        if (fs.existsSync(paths.done)) finish("done_file");
+      });
+    } catch {}
+    poll = setInterval(() => {
+      if (fs.existsSync(paths.done)) {
+        finish("done_file");
+        return;
+      }
+      if (state.tmux_session && !tmuxSessionAlive(state.tmux_session)) {
+        if (fs.existsSync(paths.done)) finish("done_file");
+        else finish("tmux_gone");
+      }
+    }, 500);
+    if (timeoutMs) timer = setTimeout(() => finish("timeout"), timeoutMs);
+    if (fs.existsSync(paths.done)) finish("done_file");
+  });
+}
+
+async function cmdWait(args) {
+  const state = loadState(args.run);
+  refreshStatus(state);
+  let waitReason;
+  if (TERMINAL_STATUSES.has(state.status)) {
+    waitReason = "already_terminal";
+  } else {
+    waitReason = await waitForWorkerDone(state, { timeoutSec: args.timeoutSec });
+  }
+  const fresh = loadState(args.run);
+  refreshStatus(fresh);
+  if (args.json) {
+    console.log(JSON.stringify({ ...fresh, wait_reason: waitReason }, null, 2));
+  } else {
+    console.log(`run_id=${args.run}`);
+    console.log(`status=${fresh.status}`);
+    console.log(`wait_reason=${waitReason}`);
+    console.log(`tmux_session=${fresh.tmux_session || "-"}`);
+    console.log(`result_file=${fresh.result_file || "-"}`);
+  }
+  if (waitReason === "timeout") process.exitCode = 2;
+  else if (waitReason === "tmux_gone" && !TERMINAL_STATUSES.has(fresh.status)) process.exitCode = 3;
 }
 
 function cmdFinish(args) {
@@ -668,6 +927,10 @@ function cleanCommitMessage(subject, body) {
 function cmdFinalize(args) {
   const state = loadState(args.run);
   refreshStatus(state);
+  if (state.kind === "merge") {
+    cmdMergeFinalize(args);
+    return;
+  }
   const root = path.resolve(state.repo_root);
   currentBranch(root);
   ensureNoGitOperation(root);
@@ -694,6 +957,118 @@ function cmdFinalize(args) {
   saveState(state);
   console.log("status=committed");
   console.log(`commit_hash=${state.commit_hash}`);
+}
+
+function cmdMergeFinalize(args) {
+  const state = loadState(args.run);
+  refreshStatus(state);
+  if (state.kind !== "merge") throw new CmdError(`run ${args.run} is not a merge run`);
+  const root = path.resolve(state.repo_root);
+  ensureNoGitOperation(root);
+  const branch = currentBranch(root);
+  if (branch !== state.merge_into) {
+    throw new CmdError(`current branch is ${branch}, expected ${state.merge_into}; checkout the target branch first`);
+  }
+
+  const paths = workerPaths(args.run);
+  const result = fs.existsSync(paths.result) ? readJson(paths.result) : {};
+  const parsed = state.parsed_result || result.parsed || {};
+  if (parsed.status !== "done" || state.status !== "done") {
+    throw new CmdError(`worker did not pass validation: state=${state.status} result=${parsed.status}`);
+  }
+
+  const reviewedSourceSha = state.merge?.sourceSha;
+  const reviewedIntoSha = state.merge?.intoSha;
+  const currentSourceSha = revParse(root, state.merge_source);
+  const currentIntoSha = revParse(root, state.merge_into);
+  if (currentSourceSha !== reviewedSourceSha) {
+    throw new CmdError(`source moved after review: reviewed=${reviewedSourceSha} current=${currentSourceSha}`);
+  }
+  if (currentIntoSha !== reviewedIntoSha) {
+    throw new CmdError(`target moved after review: reviewed=${reviewedIntoSha} current=${currentIntoSha}`);
+  }
+
+  const message = cleanCommitMessage(parsed.commit_subject, parsed.commit_body);
+  const msgFile = path.join(STATE_DIR, args.run, "commit-message.txt");
+  fs.mkdirSync(path.dirname(msgFile), { recursive: true });
+  fs.writeFileSync(msgFile, `${message}\n`);
+
+  let stashRef = "";
+  if (state.auto_stash && hasDiff(root)) {
+    const stashLabel = `git-finalizer auto-stash ${state.run_id}`;
+    const beforeSha = topStashSha(root);
+    const stashOut = sh(["git", "stash", "push", "-m", stashLabel], { cwd: root, check: false });
+    if (stashOut.status !== 0) {
+      throw new CmdError(`auto-stash failed: ${stashOut.stderr || stashOut.stdout}`);
+    }
+    const afterSha = topStashSha(root);
+    if (afterSha === beforeSha || !afterSha) {
+      // git stash push reported success but did not create a new stash entry.
+      // This happens when the only "diff" is something git stash cannot capture
+      // (e.g. submodule/worktree gitlink modifications). The working tree is now
+      // effectively the same as before push, so there is no stash for us to pop.
+      appendEvent(state, "auto_stash_noop", { label: stashLabel, before: beforeSha, after: afterSha });
+      saveState(state);
+    } else {
+      stashRef = stashLabel;
+      appendEvent(state, "auto_stash", { label: stashLabel, sha: afterSha });
+      saveState(state);
+    }
+  } else if (!state.auto_stash && hasDiff(root)) {
+    throw new CmdError(
+      `target branch has uncommitted changes; either commit/stash them first, or re-run merge-draft with --auto-stash`,
+    );
+  }
+
+  const merge = sh(
+    ["git", "merge", "--no-ff", "--no-commit", state.merge_source],
+    { cwd: root, check: false },
+  );
+  if (merge.status !== 0) {
+    sh(["git", "merge", "--abort"], { cwd: root, check: false });
+    if (stashRef) {
+      safeStashPop(root, stashRef);
+    }
+    throw new CmdError(
+      `git merge failed (likely conflicts); aborted and ${stashRef ? "restored stash" : "no stash to restore"}.\n${merge.stderr || merge.stdout}`,
+    );
+  }
+
+  try {
+    sh(["git", "commit", "-F", msgFile], { cwd: root });
+  } catch (error) {
+    if (stashRef) {
+      safeStashPop(root, stashRef);
+    }
+    throw error;
+  }
+
+  state.commit_hash = sh(["git", "rev-parse", "--short", "HEAD"], { cwd: root }).stdout.trim();
+  state.commit_message_file = msgFile;
+  state.status = "committed";
+  appendEvent(state, "merge_commit", { commit_hash: state.commit_hash });
+  saveState(state);
+
+  console.log("status=committed");
+  console.log(`commit_hash=${state.commit_hash}`);
+
+  if (stashRef) {
+    const popResult = safeStashPop(root, stashRef);
+    if (popResult.skipped) {
+      appendEvent(state, "stash_pop_skipped", { reason: popResult.reason });
+      saveState(state);
+      console.log(`stash_pop=skipped (${popResult.reason})`);
+    } else if (popResult.conflict) {
+      appendEvent(state, "stash_pop_failed", { stderr: popResult.stderr });
+      saveState(state);
+      console.log(`stash_pop=conflict (left in stash list as ${stashRef})`);
+      console.log(`stash_pop_stderr=${(popResult.stderr || "").trim().split(/\r?\n/)[0] || "-"}`);
+    } else {
+      appendEvent(state, "stash_pop", {});
+      saveState(state);
+      console.log("stash_pop=ok");
+    }
+  }
 }
 
 function cmdClose(args) {
@@ -735,6 +1110,18 @@ function parseArgs(argv) {
       args.file = rest[++i];
     } else if (item === "--repo-root") {
       args.repoRoot = rest[++i];
+    } else if (item === "--source") {
+      args.source = rest[++i];
+    } else if (item === "--into") {
+      args.into = rest[++i];
+    } else if (item === "--auto-stash") {
+      args.autoStash = true;
+    } else if (item === "--timeout") {
+      const value = Number(rest[++i]);
+      if (!Number.isFinite(value) || value < 0) throw new CmdError("--timeout must be a non-negative number of seconds");
+      args.timeoutSec = value;
+    } else if (item === "--wait") {
+      args.wait = true;
     } else {
       throw new CmdError(`unknown argument: ${item}`);
     }
@@ -748,10 +1135,13 @@ function usage() {
 commands:
   doctor
   draft --goal <summary> [--test-cmd <command>] [--run <run_id>]
-  run --run <run_id>
+  merge-draft --source <branch> [--into <branch>] [--goal <summary>] [--test-cmd <command>] [--auto-stash] [--run <run_id>]
+  run --run <run_id> [--wait] [--timeout <seconds>] [--json]
+  wait --run <run_id> [--timeout <seconds>] [--json]
   status --run <run_id> [--json]
   inspect --run <run_id>
-  finalize --run <run_id>
+  finalize --run <run_id>          # routes to merge-finalize automatically when kind=merge
+  merge-finalize --run <run_id>
   close --run <run_id>`);
 }
 
@@ -759,7 +1149,7 @@ function requireArg(args, key) {
   if (!args[key]) throw new CmdError(`missing required argument: --${key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`);
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.command || args.command === "-h" || args.command === "--help") {
     usage();
@@ -773,9 +1163,17 @@ function main() {
       requireArg(args, "goal");
       cmdDraft(args);
       break;
+    case "merge-draft":
+      requireArg(args, "source");
+      cmdMergeDraft(args);
+      break;
     case "run":
       requireArg(args, "run");
-      cmdRun(args);
+      await cmdRun(args);
+      break;
+    case "wait":
+      requireArg(args, "run");
+      await cmdWait(args);
       break;
     case "status":
       requireArg(args, "run");
@@ -788,6 +1186,10 @@ function main() {
     case "finalize":
       requireArg(args, "run");
       cmdFinalize(args);
+      break;
+    case "merge-finalize":
+      requireArg(args, "run");
+      cmdMergeFinalize(args);
       break;
     case "close":
       requireArg(args, "run");
@@ -812,12 +1214,11 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (error) {
+main().catch((error) => {
   if (error instanceof CmdError) {
     console.error(`error: ${error.message}`);
     process.exit(1);
   }
-  throw error;
-}
+  console.error(error);
+  process.exit(1);
+});
