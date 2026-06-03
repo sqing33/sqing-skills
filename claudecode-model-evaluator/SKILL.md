@@ -84,33 +84,28 @@ macOS Apple Silicon 环境把示例中的 `bin/linux-amd64/eval_runner` 换成 `
 
 ```yaml
 models:
-  - id: minimax-m27-highspeed
-    label: MiniMax-M2.7-highspeed
-    launcher:
-      type: claude-cli
-      model: MiniMax-M2.7-highspeed
-      max_turns: 25
-      extra_args: []
+  - model: MiniMax-M2.7-highspeed
     env:
       ANTHROPIC_BASE_URL: https://api.minimaxi.com/anthropic
       ANTHROPIC_API_KEY: your-key
-    timeout_minutes: 20
-    budget_usd: 3.0
-
-execution:
-  max_parallel: 1
-  workspace_mode: git-worktree
-
-rubric:
-  profile: coding-default
+    headers:
+      X-Provider: minimax
 ```
 
 注意：
 
-- `execution.max_parallel: 1` 最稳；需要更快时再调大。
-- 优先使用 `execution.workspace_mode: git-worktree` 隔离每个模型的修改。
-- 第三方 Anthropic 兼容网关中，`launcher.model` 必须是网关接受的真实模型 ID，不一定等于展示名。
-- 网关差异放在 `env` 里，优先走原生 `claude-cli` launcher。
+- `model` 是唯一必填模型名；运行器会自动用它生成 `id` 和 `label`，并等价展开为 `launcher.type: claude-cli` + `launcher.model`。
+- 需要自定义产物目录名或报告展示名时，才额外写 `id` 或 `label`。
+- 第三方 Anthropic 兼容网关中，`model` 必须是网关接受的真实模型 ID。
+- 网关差异放在 `env` 里，优先走原生 `claude-cli` launcher；需要高级 Claude CLI 参数时可改用完整 `launcher` 写法。
+- 不写 `execution.max_parallel` 时默认不限制并发，相当于本次有几个模型就同时跑几个。
+- 不写 `execution.workspace_mode` 时默认使用 `git-worktree` 隔离每个模型的修改。
+- 不写 `rubric.profile` 时默认使用 `coding-default`。
+- `launcher.max_turns` 是可选项；不写时运行器不会传 `--max-turns`。
+- `timeout_minutes` 是可选项；不写时运行器不设置进程超时。
+- `budget_usd` 是可选项；不写时运行器不会传 `--max-budget-usd`。
+- Claude Code 的 1M context 不是独立 runner 参数。按官方 Claude Code 模型配置，支持的模型可在模型名后追加 `[1m]`，例如 `model: claude-opus-4-7[1m]`；也可设置 `ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7[1m]`。需要禁用 1M context 时设置 `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`。
+- 每个模型可选 `headers`，运行器会把它转成 Claude Code 支持的 `ANTHROPIC_CUSTOM_HEADERS` 多行请求头；如果 `env.ANTHROPIC_CUSTOM_HEADERS` 已存在，会追加而不是覆盖。
 - 运行器写入 `run_spec`、`summary`、`status`、日志和报告前会脱敏常见 key/token/authorization 文本，但仍应避免让模型主动打印环境变量。
 - 只有本地 `claude` CLI 无法直接驱动后端时，才使用备用 `launch_cmd`。
 

@@ -181,6 +181,9 @@ func runOneModel(cfg *spec.BenchmarkSpec, model spec.ModelSpec) (map[string]any,
 	for k, v := range model.Env {
 		env[k] = v
 	}
+	if customHeaders := formatCustomHeaders(model.Headers); customHeaders != "" {
+		env["ANTHROPIC_CUSTOM_HEADERS"] = appendHeaderLines(env["ANTHROPIC_CUSTOM_HEADERS"], customHeaders)
+	}
 	resultFile := filepath.Join(modelDir, "model_eval_result.json")
 	env["MODEL_EVAL_TASK_PACKET"] = taskPacketPath
 	env["MODEL_EVAL_ARTIFACT_DIR"] = modelDir
@@ -273,7 +276,10 @@ func executeModelLaunch(model spec.ModelSpec, workdir string, env map[string]str
 }
 
 func buildClaudeCLIArgv(model spec.ModelSpec, taskPacket string) []string {
-	argv := []string{"claude", "-p", taskPacket, "--verbose", "--output-format", "stream-json", "--input-format", "text", "--model", model.Launcher.Model, "--permission-mode", "bypassPermissions", "--setting-sources", "local", "--no-session-persistence", "--max-turns", fmt.Sprintf("%d", model.Launcher.MaxTurns)}
+	argv := []string{"claude", "-p", taskPacket, "--verbose", "--output-format", "stream-json", "--input-format", "text", "--model", model.Launcher.Model, "--permission-mode", "bypassPermissions", "--setting-sources", "local", "--no-session-persistence"}
+	if model.Launcher.MaxTurns > 0 {
+		argv = append(argv, "--max-turns", fmt.Sprintf("%d", model.Launcher.MaxTurns))
+	}
 	if model.BudgetUSD != nil {
 		argv = append(argv, "--max-budget-usd", fmt.Sprintf("%v", *model.BudgetUSD))
 	}
@@ -440,7 +446,8 @@ func loadExistingSpec(artifactsDir string) (*spec.BenchmarkSpec, error) {
 	cfg.Rubric.Profile, _ = payload["rubric"].(map[string]any)["profile"].(string)
 	for _, item := range payload["models"].([]any) {
 		data := item.(map[string]any)
-		model := spec.ModelSpec{ID: data["id"].(string), Label: coalesceString(asString(data["label"]), data["id"].(string)), Env: map[string]string{}, TimeoutMinutes: asFloat(data["timeout_minutes"])}
+		modelID := asString(data["id"])
+		model := spec.ModelSpec{ID: modelID, Label: coalesceString(asString(data["label"]), modelID), Model: asString(data["model"]), Env: map[string]string{}, Headers: map[string]string{}, TimeoutMinutes: asFloat(data["timeout_minutes"])}
 		if launchCmd, ok := data["launch_cmd"].(string); ok && launchCmd != "" {
 			model.LaunchCmd = &launchCmd
 		}
@@ -450,6 +457,11 @@ func loadExistingSpec(artifactsDir string) (*spec.BenchmarkSpec, error) {
 		if env, ok := data["env"].(map[string]any); ok {
 			for k, v := range env {
 				model.Env[k] = fmt.Sprintf("%v", v)
+			}
+		}
+		if headers, ok := data["headers"].(map[string]any); ok {
+			for k, v := range headers {
+				model.Headers[k] = fmt.Sprintf("%v", v)
 			}
 		}
 		cfg.Models = append(cfg.Models, model)
@@ -516,6 +528,34 @@ func authEnvSource(env map[string]string) string {
 		return "ANTHROPIC_API_KEY"
 	}
 	return "existing"
+}
+func formatCustomHeaders(headers map[string]string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		lines = append(lines, fmt.Sprintf("%s:%s", strings.TrimSpace(key), strings.TrimSpace(headers[key])))
+	}
+	return strings.Join(lines, "\n")
+}
+func appendHeaderLines(existing, extra string) string {
+	existing = strings.TrimSpace(existing)
+	extra = strings.TrimSpace(extra)
+	if existing == "" {
+		return extra
+	}
+	if extra == "" {
+		return existing
+	}
+	return existing + "\n" + extra
 }
 func durationSeconds(value any) any {
 	if value == nil {

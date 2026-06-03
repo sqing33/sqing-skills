@@ -19,26 +19,13 @@
 
 ```yaml
 models:
-  - id: provider-a-fast
-    label: Provider A Fast
-    launcher:
-      type: claude-cli
-      model: gpt-5
-      max_turns: 25
-      extra_args: []
+  - model: gpt-5
     env:
       ANTHROPIC_BASE_URL: https://gateway.example/v1
       ANTHROPIC_API_KEY: secret
-    timeout_minutes: 20
-    budget_usd: 3.0
-execution:
-  max_parallel: 1
-  workspace_mode: git-worktree
-rubric:
-  profile: coding-default
 ```
 
-`execution.max_parallel` 支持真实并行。追求稳定时用 `1`；需要更快且能承受本地/网络负载时可用 `2` 或 `4`。
+不写 `execution.max_parallel` 时默认不限制并发，相当于有几个模型就同时跑几个。需要更稳时可显式写 `execution.max_parallel: 1` 或 `2`。
 
 ## 运行命令
 
@@ -76,13 +63,7 @@ target:
   test_cmd: python -m pytest -q
 
 models:
-  - id: provider-a-fast
-    label: Provider A Fast
-    launcher:
-      type: claude-cli
-      model: gpt-5
-      max_turns: 25
-      extra_args: []
+  - model: gpt-5
     env:
       ANTHROPIC_BASE_URL: https://gateway.example/v1
       ANTHROPIC_API_KEY: secret

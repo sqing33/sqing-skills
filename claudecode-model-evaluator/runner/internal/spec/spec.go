@@ -44,9 +44,11 @@ type LauncherSpec struct {
 type ModelSpec struct {
 	ID             string            `json:"id"`
 	Label          string            `json:"label"`
+	Model          string            `json:"model"`
 	LaunchCmd      *string           `json:"launch_cmd"`
 	Launcher       *LauncherSpec     `json:"launcher"`
 	Env            map[string]string `json:"env"`
+	Headers        map[string]string `json:"headers"`
 	TimeoutMinutes float64           `json:"timeout_minutes"`
 	BudgetUSD      *float64          `json:"budget_usd"`
 }
@@ -118,7 +120,7 @@ func LoadModelsFile(path string) ([]ModelSpec, ExecutionSpec, RubricSpec, string
 		return nil, ExecutionSpec{}, RubricSpec{}, "", err
 	}
 	if cfg.Execution.MaxParallel <= 0 {
-		cfg.Execution.MaxParallel = 1
+		cfg.Execution.MaxParallel = len(cfg.Models)
 	}
 	if cfg.Execution.WorkspaceMode == "" {
 		cfg.Execution.WorkspaceMode = WorkspaceGitWorktree
@@ -244,7 +246,7 @@ func validateBenchmarkSpec(cfg *BenchmarkSpec, requireArtifacts bool) error {
 		return &SpecError{Message: "execution.artifacts_dir must not be empty"}
 	}
 	if cfg.Execution.MaxParallel <= 0 {
-		cfg.Execution.MaxParallel = 1
+		cfg.Execution.MaxParallel = len(cfg.Models)
 	}
 	if cfg.Execution.WorkspaceMode == "" {
 		cfg.Execution.WorkspaceMode = WorkspaceGitWorktree
@@ -264,17 +266,28 @@ func validateModels(models []ModelSpec) error {
 	}
 	for i := range models {
 		m := &models[i]
+		if m.Launcher == nil && strings.TrimSpace(m.Model) != "" {
+			m.Launcher = &LauncherSpec{Type: "claude-cli", Model: strings.TrimSpace(m.Model)}
+		}
+		if m.Launcher != nil && strings.TrimSpace(m.Launcher.Model) == "" && strings.TrimSpace(m.Model) != "" {
+			m.Launcher.Model = strings.TrimSpace(m.Model)
+		}
 		if strings.TrimSpace(m.ID) == "" {
-			return &SpecError{Message: fmt.Sprintf("models[%d].id must not be empty", i)}
+			m.ID = modelIDFromSpec(*m, i)
 		}
 		if strings.TrimSpace(m.Label) == "" {
-			m.Label = m.ID
+			m.Label = modelLabelFromSpec(*m)
 		}
 		if m.Env == nil {
 			m.Env = map[string]string{}
 		}
-		if m.TimeoutMinutes <= 0 {
-			m.TimeoutMinutes = 20
+		if m.Headers == nil {
+			m.Headers = map[string]string{}
+		}
+		for key := range m.Headers {
+			if strings.TrimSpace(key) == "" || strings.ContainsAny(key, ":\r\n") {
+				return &SpecError{Message: fmt.Sprintf("models[%s].headers contains invalid header name %q", m.ID, key)}
+			}
 		}
 		if m.Launcher != nil {
 			if m.Launcher.Type != "claude-cli" {
@@ -282,9 +295,6 @@ func validateModels(models []ModelSpec) error {
 			}
 			if strings.TrimSpace(m.Launcher.Model) == "" {
 				return &SpecError{Message: fmt.Sprintf("models[%s].launcher.model must not be empty", m.ID)}
-			}
-			if m.Launcher.MaxTurns <= 0 {
-				m.Launcher.MaxTurns = 25
 			}
 			if m.Launcher.ExtraArgs == nil {
 				m.Launcher.ExtraArgs = []string{}
@@ -295,6 +305,48 @@ func validateModels(models []ModelSpec) error {
 		}
 	}
 	return nil
+}
+
+func modelIDFromSpec(model ModelSpec, index int) string {
+	if model.Launcher != nil && strings.TrimSpace(model.Launcher.Model) != "" {
+		return slugifyModelID(model.Launcher.Model)
+	}
+	if strings.TrimSpace(model.Model) != "" {
+		return slugifyModelID(model.Model)
+	}
+	return fmt.Sprintf("model-%d", index+1)
+}
+
+func modelLabelFromSpec(model ModelSpec) string {
+	if model.Launcher != nil && strings.TrimSpace(model.Launcher.Model) != "" {
+		return strings.TrimSpace(model.Launcher.Model)
+	}
+	if strings.TrimSpace(model.Model) != "" {
+		return strings.TrimSpace(model.Model)
+	}
+	return model.ID
+}
+
+func slugifyModelID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteRune('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(builder.String(), "-")
+	if out == "" {
+		return "model"
+	}
+	return out
 }
 
 func normalizeAllowedPaths(paths []string) []string {
@@ -327,18 +379,33 @@ func toAnySlice(items []string) []any {
 func modelsToAny(models []ModelSpec) []any {
 	out := make([]any, 0, len(models))
 	for _, model := range models {
-		entry := map[string]any{"id": model.ID, "label": model.Label, "env": map[string]any{}, "timeout_minutes": model.TimeoutMinutes, "budget_usd": model.BudgetUSD}
+		entry := map[string]any{"id": model.ID, "label": model.Label, "env": map[string]any{}, "headers": map[string]any{}}
+		if model.TimeoutMinutes > 0 {
+			entry["timeout_minutes"] = model.TimeoutMinutes
+		}
+		if model.BudgetUSD != nil {
+			entry["budget_usd"] = model.BudgetUSD
+		}
 		if model.LaunchCmd != nil {
 			entry["launch_cmd"] = *model.LaunchCmd
 		}
 		if model.Launcher != nil {
-			entry["launcher"] = map[string]any{"type": model.Launcher.Type, "model": model.Launcher.Model, "max_turns": model.Launcher.MaxTurns, "extra_args": toAnySlice(model.Launcher.ExtraArgs)}
+			launcher := map[string]any{"type": model.Launcher.Type, "model": model.Launcher.Model, "extra_args": toAnySlice(model.Launcher.ExtraArgs)}
+			if model.Launcher.MaxTurns > 0 {
+				launcher["max_turns"] = model.Launcher.MaxTurns
+			}
+			entry["launcher"] = launcher
 		}
 		env := map[string]any{}
 		for k, v := range sanitize.StringMap(model.Env) {
 			env[k] = v
 		}
 		entry["env"] = env
+		headers := map[string]any{}
+		for k, v := range sanitize.StringMap(model.Headers) {
+			headers[k] = v
+		}
+		entry["headers"] = headers
 		out = append(out, entry)
 	}
 	return out
