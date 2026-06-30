@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -38,8 +39,42 @@ func RunProcess(argv []string, cwd string, env map[string]string, timeout time.D
 		if path, err := exec.LookPath(resolved[0]); err == nil {
 			resolved[0] = path
 		}
+		// On Windows, Go resolves `claude` to the npm `claude.cmd` batch shim.
+		// Go 1.21+ escapes args for .cmd/.bat via cmd.exe, and cmd.exe's `%*`
+		// forwarding truncates any argument containing a newline at the first
+		// line break — so a multi-line `-p` task packet arrives at the CLI as
+		// only its first line. Bypass the shim by pointing at the underlying
+		// node executable directly when we can find it.
+		resolved[0] = resolveBatchShim(resolved[0])
 	}
 	return run(resolved, quoteArgs(argv), cwd, env, timeout, "direct")
+}
+
+// resolveBatchShim maps a Windows .cmd/.bat launcher to a real executable that
+// accepts arguments without cmd.exe's newline truncation. For the npm-installed
+// Claude CLI, `<prefix>/claude.cmd` wraps
+// `<prefix>/node_modules/@anthropic-ai/claude-code/bin/claude.exe`; prefer that
+// exe when it exists. Returns the input unchanged when no safe target is found.
+func resolveBatchShim(path string) string {
+	if runtime.GOOS != "windows" {
+		return path
+	}
+	lower := strings.ToLower(path)
+	if !strings.HasSuffix(lower, ".cmd") && !strings.HasSuffix(lower, ".bat") {
+		return path
+	}
+	dir := filepath.Dir(path)
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	candidates := []string{
+		filepath.Join(dir, "node_modules", "@anthropic-ai", "claude-code", "bin", base+".exe"),
+		filepath.Join(dir, base+".exe"),
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+			return c
+		}
+	}
+	return path
 }
 
 func run(argv []string, command, cwd string, env map[string]string, timeout time.Duration, shell string) Result {

@@ -184,6 +184,21 @@ func runOneModel(cfg *spec.BenchmarkSpec, model spec.ModelSpec) (map[string]any,
 	if customHeaders := formatCustomHeaders(model.Headers); customHeaders != "" {
 		env["ANTHROPIC_CUSTOM_HEADERS"] = appendHeaderLines(env["ANTHROPIC_CUSTOM_HEADERS"], customHeaders)
 	}
+	// Isolate each claude-cli model from the user's ~/.claude/settings.json.
+	// That file's "env" block (e.g. ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL for
+	// the operator's own gateway) is injected by the CLI even under
+	// --setting-sources local, and it silently overrides the per-model
+	// ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL — so a model pointed at a different
+	// gateway authenticates with the wrong credentials and gets 401. Pointing the
+	// CLI at a clean, per-model CLAUDE_CONFIG_DIR cuts that injection while still
+	// honoring the env we pass explicitly. Respect an operator-provided override.
+	if launcherType(model) == "claude-cli" && strings.TrimSpace(env["CLAUDE_CONFIG_DIR"]) == "" {
+		if cfgDir, err := prepareIsolatedConfigDir(modelDir); err != nil {
+			logger.emit("config_dir_warning", map[string]any{"error": err.Error()})
+		} else {
+			env["CLAUDE_CONFIG_DIR"] = cfgDir
+		}
+	}
 	resultFile := filepath.Join(modelDir, "model_eval_result.json")
 	env["MODEL_EVAL_TASK_PACKET"] = taskPacketPath
 	env["MODEL_EVAL_ARTIFACT_DIR"] = modelDir
@@ -759,6 +774,32 @@ func launcherType(model spec.ModelSpec) string {
 	}
 	return "launch-cmd"
 }
+
+// prepareIsolatedConfigDir creates a clean, per-model CLAUDE_CONFIG_DIR so the
+// launched CLI does not inherit the operator's ~/.claude/settings.json "env"
+// block (which would otherwise override the model's gateway credentials and
+// cause cross-gateway 401s). It seeds a minimal settings.json that keeps the
+// non-interactive bypass behavior the runner relies on.
+func prepareIsolatedConfigDir(modelDir string) (string, error) {
+	cfgDir := filepath.Join(modelDir, "claude_config")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		return "", err
+	}
+	settings := map[string]any{
+		"permissions":                       map[string]any{"defaultMode": "bypassPermissions"},
+		"skipDangerousModePermissionPrompt": true,
+		"includeCoAuthoredBy":               false,
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "settings.json"), data, 0o644); err != nil {
+		return "", err
+	}
+	return cfgDir, nil
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

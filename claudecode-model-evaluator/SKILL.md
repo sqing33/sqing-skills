@@ -48,7 +48,7 @@ description: 在多个 Claude Code 模型后端上对同一个编码任务运行
 
 1. 读取 `models.yaml`，确认模型、网关、执行并发和 workspace 策略。
 2. 从当前上下文生成短 `task-id`、任务提示词、仓库路径、测试命令和验收说明。
-3. 按平台选择运行器。macOS Apple Silicon 使用 `bin/macos-arm64/eval_runner`，Linux 使用 `bin/linux-amd64/eval_runner`，Windows 使用 `bin/windows-amd64/eval_runner.exe`。
+3. 按平台选择运行器。macOS Apple Silicon 使用 `bin/macos-arm64/eval_runner`，Linux/WSL2 使用 `bin/linux-amd64/eval_runner`，Windows 使用 `bin/windows-amd64/eval_runner.exe`。如果当前环境是 Windows，且同时能调用 Windows 原生 Claude Code 和 WSL2 内的 Claude Code，用户未明确指定时优先使用 WSL2 内的 Claude Code 和 Linux runner。
 4. 优先运行 `run-skill`：
 
 ```bash
@@ -76,7 +76,48 @@ bin/linux-amd64/eval_runner run --spec path/to/spec.yaml
 bin/linux-amd64/eval_runner summarize --artifacts-dir path/to/artifacts
 ```
 
-macOS Apple Silicon 环境把示例中的 `bin/linux-amd64/eval_runner` 换成 `bin/macos-arm64/eval_runner`；Windows 环境换成 `bin/windows-amd64/eval_runner.exe`。
+macOS Apple Silicon 环境把示例中的 `bin/linux-amd64/eval_runner` 换成 `bin/macos-arm64/eval_runner`；Windows 原生环境换成 `bin/windows-amd64/eval_runner.exe`。Windows 上可用 WSL2 时，默认不要换成 Windows runner，而是通过 `wsl.exe` 调用 Linux runner。
+
+## Windows + WSL2 运行规则
+
+在 Windows 主机上运行本 skill 时，先检测是否有 WSL2：
+
+```powershell
+wsl.exe -l -v
+wsl.exe bash -ic "command -v claude && claude --version"
+```
+
+如果 WSL2 内的 `claude` 可用，且用户没有明确要求 Windows 原生执行，则优先走 WSL2：
+
+- `repo_path`、`models.yaml`、`artifacts_dir` 等路径要转换成 WSL 路径，例如 `C:\work\repo` 转成 `/mnt/c/work/repo`，`D:\Codes\...` 转成 `/mnt/d/Codes/...`。
+- 使用 `bin/linux-amd64/eval_runner`，不要使用 `bin/windows-amd64/eval_runner.exe`。
+- 尽量把 WSL 侧命令写成临时 `.sh` 脚本或使用参数数组，避免 PowerShell、`wsl.exe`、`bash -lc` 三层引号把 `--test-cmd`、中文提示词或验收说明拆坏。
+- 任务提示词或验收说明包含中文时，优先写入 UTF-8 文件，再使用 `--prompt-file` 和 `--acceptance-notes-file`。
+
+很多 WSL 环境通过 nvm/asdf/mise 等在 `~/.bashrc` 里配置 Node 和 Claude Code。注意：普通 `wsl.exe bash -lc "which claude"` 不一定会加载这些配置，因为不少 `.bashrc` 会在非交互 shell 中提前 `return`。如果 `bash -ic "claude --version"` 成功但 `bash -lc "claude --version"` 失败，不要判定 Claude 不可用；应在执行脚本开头显式加载对应环境。nvm 的推荐模板：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+export NVM_DIR="$HOME/.nvm"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  . "$NVM_DIR/nvm.sh"
+fi
+
+command -v claude
+claude --version
+
+/mnt/d/Codes/sqing-skills/claudecode-model-evaluator/bin/linux-amd64/eval_runner run-skill \
+  --models-file /mnt/d/Codes/sqing-skills/claudecode-model-evaluator/models.yaml \
+  --task-id <short-id> \
+  --prompt-file <prompt-file> \
+  --repo-path <repo-path> \
+  --artifacts-dir <artifact-dir> \
+  --test-cmd '<test command>'
+```
+
+只有在 WSL2 不可用、WSL2 内没有可用 `claude`、或用户明确要求 Windows 原生 Claude Code 时，才使用 Windows runner。
 
 ## `models.yaml` 结构
 

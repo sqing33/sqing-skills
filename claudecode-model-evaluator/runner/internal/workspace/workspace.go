@@ -95,10 +95,17 @@ func CopyTree(src, dst, artifactsDir string) error {
 		if d.IsDir() && ignoreDirNames[name] {
 			return filepath.SkipDir
 		}
-		target := filepath.Join(dst, rel)
-		if strings.HasPrefix(target, artifactsDir) {
+		// Skip the artifacts directory when it lives inside the source tree.
+		// This MUST test the SOURCE path: the destination always lives under
+		// artifactsDir, so testing the destination skipped every file and left
+		// every workspace empty.
+		if path == artifactsDir || strings.HasPrefix(path, artifactsDir+string(os.PathSeparator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
+		target := filepath.Join(dst, rel)
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
