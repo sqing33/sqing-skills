@@ -12,6 +12,7 @@
 | `git-finalizer`                | Node.js     | 在强模型或主 agent 写完代码后，使用高速 Claude Code worker 运行测试、审查 git diff、生成中文提交信息，并在验证通过后安全提交。        |
 | `git-worktree-flow`            | Bash        | 提供 Git worktree 流程：修改前创建 worktree，完成后输出审查摘要，明确询问是否合并，并生成规范提交信息。                               |
 | `github-feature-analyzer`      | Python      | 分析公开 GitHub 仓库中一个或多个功能的实现机制，按 README 优先、机制优先和行级证据生成中文报告。                                      |
+| `tmux-openspec-parallel-workers` | Node.js   | OpenSpec 并发实现工作流：父代理写 OpenSpec 和 worker 矩阵，通过 tmux 并发启动多个 Claude Code worker，并由 merge worker 整合验证。      |
 | `tmux-claude-parallel-workers` | Node.js     | 通用并行实现工作流：主控代理负责拆解和规划任务，通过 tmux 启动多个 Claude Code worker 到独立 branch/worktree 中执行，并支持结果整合。 |
 | `tmux-claude-openspec-worker`  | Node.js     | OpenSpec 单工实现工作流：父代理管理 OpenSpec 变更和实现规范，再启动一个 Claude Code worker 按 OpenSpec 上下文完成实现。               |
 

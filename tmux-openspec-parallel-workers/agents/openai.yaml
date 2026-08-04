@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tmux OpenSpec Parallel Workers"
+  short_description: "OpenSpec tmux workers in parallel"
+  default_prompt: "Use OpenSpec as the contract, split work into a worker matrix, run parallel Claude Code tmux workers, and integrate results."

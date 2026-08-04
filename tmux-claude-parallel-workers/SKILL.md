@@ -5,6 +5,8 @@ description: 用主控代理拆解和规划编程任务，再通过 tmux 并行�
 
 # Tmux Claude Parallel Workers
 
+> OpenSpec + 多 tmux worker 并发实现请优先使用 `tmux-openspec-parallel-workers`。本 skill 保留为非 OpenSpec 的通用并行实现入口。
+
 ## 目标
 
 - 用主控代理自动完成：任务拆解与规划 -> 计划审查 -> tmux 并行执行 -> 子 Claude 整合 -> 查看结果。

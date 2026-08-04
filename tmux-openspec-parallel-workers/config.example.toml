@@ -1,0 +1,23 @@
+selected_model = "minimax"
+
+[profiles.minimax]
+base_url = ""
+# auth_env controls how Claude Code receives api_key:
+# - auth_token: ANTHROPIC_AUTH_TOKEN, common for Anthropic-compatible gateways
+# - api_key: ANTHROPIC_API_KEY, common for official Anthropic API
+# - both: legacy fallback when a gateway accepts either
+auth_env = "auth_token"
+api_key = ""
+model = "MiniMax-M2.7-highspeed"
+
+[profiles.glm_5_1]
+base_url = ""
+auth_env = "auth_token"
+api_key = ""
+model = "glm-5.1"
+
+[profiles.kimi_k2_5]
+base_url = ""
+auth_env = "auth_token"
+api_key = ""
+model = "kimi-k2.5"

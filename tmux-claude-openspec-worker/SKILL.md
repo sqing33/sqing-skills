@@ -5,6 +5,8 @@ description: 用主控代理通过 OpenSpec 管理实现规范，再把代码实
 
 # Tmux Claude OpenSpec Worker
 
+> OpenSpec + 多 tmux worker 并发实现请优先使用 `tmux-openspec-parallel-workers`。本 skill 保留为单 worker OpenSpec 兼容入口。
+
 ## 目标
 
 - 父代理先用 OpenSpec 管理和确认变更规范。
