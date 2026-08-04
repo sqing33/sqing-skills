@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI 热点日报转小红书"
+  short_description: "聚合多源 AI 热点并用服务端无头核验生成每日 7–10 条新闻简报"
+  default_prompt: "Use $ai-daily-hotspot-xhs to collect today’s AI hotspots, verify sources with the server-compatible headless workflow, and produce 7–10 sourced news briefs."
