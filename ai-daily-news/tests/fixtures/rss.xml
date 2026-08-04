@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Fixture RSS</title>
+    <item>
+      <title><![CDATA[Acme launches Model One]]></title>
+      <link>https://example.com/model-one?utm_source=feed</link>
+      <pubDate>Sun, 12 Jul 2026 23:00:00 GMT</pubDate>
+      <description><![CDATA[<p>A primary model launch.</p>]]></description>
+    </item>
+    <item>
+      <title>Entry without date</title>
+      <link>https://example.com/no-date</link>
+      <description>Still usable as a title lead.</description>
+    </item>
+    <item>
+      <title>Missing link is skipped</title>
+      <pubDate>Sun, 12 Jul 2026 22:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

@@ -36,3 +36,4 @@ config.toml
 models.yaml
 .venv-reference/
 .github-feature-analyzer/
+**/output/
