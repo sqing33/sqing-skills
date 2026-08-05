@@ -38,6 +38,9 @@ models.yaml
 .github-feature-analyzer/
 **/output/
 
+# Per-skill .env (real values; .env.example is committed)
+**/.env
+
 # Packaged artifacts (built per-skill outside the repo, regenerated on demand)
 *.zip
 *.tar
