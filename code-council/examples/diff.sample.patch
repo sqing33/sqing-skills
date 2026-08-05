@@ -1,0 +1,57 @@
+--- a/internal/user/model.go
++++ b/internal/user/model.go
+@@ -12,6 +12,7 @@ type User struct {
+ 	Email        string `json:"email" db:"email"`
+ 	Timezone     string `json:"timezone" db:"timezone"`
+ 	Language     string `json:"language" db:"language"`
++	NotifPrefs   string `json:"notification_prefs" db:"notification_prefs"` // JSON blob
+ 	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+ }
+
+--- a/internal/user/settings.go
++++ b/internal/user/settings.go
+@@ -45,6 +45,21 @@ func (s *Service) GetSettings(ctx context.Context, userID int64) (*Settings, er
+ 	return s, nil
+ }
+
++func (s *Service) UpdateNotifPrefs(ctx context.Context, userID int64, prefs NotifPrefs) error {
++	var buf bytes.Buffer
++	if err := json.NewEncoder(&buf).Encode(prefs); err != nil {
++		return err
++	}
++	_, err := s.db.Exec(ctx, "UPDATE users SET notification_prefs = ? WHERE id = ?", buf.String(), userID)
++	return err
++}
++
++type NotifPrefs struct {
++	Events     []string `json:"events"`
++	QuietHours [2]int   `json:"quiet_hours"`
++}
++
+ // ... other methods ...
+--- a/internal/push/sender.go
++++ b/internal/push/sender.go
+@@ -88,6 +88,17 @@ func SendPush(ctx context.Context, userID int64, event string, payload map[str
+ 	// ... build message ...
++	prefs, err := getUserNotifPrefs(ctx, userID)
++	if err != nil {
++		return err
++	}
++	if !shouldSend(prefs, event, time.Now()) {
++		return nil
++	}
+ 	// ... send ...
+ }
+
++func shouldSend(prefs user.NotifPrefs, event string, now time.Time) bool {
++	for _, e := range prefs.Events {
++		if e == event {
++			break
++		}
++	}
++	h := now.Hour()
++	if prefs.QuietHours[0] < prefs.QuietHours[1] {
++		return h < prefs.QuietHours[0] || h >= prefs.QuietHours[1]
++	}
++	return h >= prefs.QuietHours[0] && h < prefs.QuietHours[1]
++}

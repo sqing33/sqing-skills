@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "code-council output schema",
+  "definitions": {
+    "issue": {
+      "type": "object",
+      "required": ["id", "severity", "category", "description"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(ISS|ESC|NOTE|M)-[0-9]+$"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["BLOCK", "WARN", "NIT"]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "correctness",
+            "security",
+            "performance",
+            "tests",
+            "plan_alignment",
+            "design",
+            "ux",
+            "ops",
+            "docs"
+          ]
+        },
+        "location": { "type": "string" },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 800
+        },
+        "suggestion": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "action": {
+          "type": "string",
+          "enum": ["fix", "escalate", "note"]
+        },
+        "applied": { "type": "boolean" },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "label"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[A-Z]$" },
+              "label": { "type": "string" },
+              "tradeoff": { "type": "string" }
+            }
+          }
+        },
+        "pi_recommendation": {
+          "type": "string",
+          "pattern": "^[A-Z]$"
+        },
+        "pi_reasoning": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "title": "stage 2 / 8: analyze / review",
+      "type": "object",
+      "required": ["verdict", "summary", "issues"],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["pass", "fail", "warn"]
+        },
+        "summary": { "type": "string", "maxLength": 200 },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/issue" }
+        },
+        "agreement_with_first_pass": {
+          "type": "object",
+          "properties": {
+            "confirmed": { "type": "array" },
+            "added": { "type": "array" },
+            "disputed": { "type": "array" }
+          }
+        },
+        "plan_coverage": {
+          "type": "object",
+          "properties": {
+            "covered": { "type": "array", "items": { "type": "string" } },
+            "partial": { "type": "array", "items": { "type": "string" } },
+            "missing": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "stage 3: fix-plan",
+      "type": "object",
+      "required": ["verdict", "summary", "issues", "updated_plan"],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["pass", "fail", "warn"]
+        },
+        "summary": { "type": "string", "maxLength": 200 },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/issue" }
+        },
+        "change_log": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "updated_plan": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  ]
+}
