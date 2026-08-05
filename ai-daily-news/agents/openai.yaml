@@ -1,4 +1,0 @@
-interface:
-  display_name: "AI 热点聚合新闻"
-  short_description: "聚合多源 AI 热点并核验生成每日 7–10 条聚合新闻文档用于查看"
-  default_prompt: "Use $ai-daily-news to collect today’s AI hotspots, verify sources, attach images, and produce a 7–10 item aggregated news report."

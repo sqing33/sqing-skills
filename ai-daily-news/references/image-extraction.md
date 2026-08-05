@@ -1,6 +1,6 @@
 # 配图提取工作流（asset-fetcher 子模块）
 
-> 集成在 `ai-daily-hotspot-xhs` 的"写稿前 → 嵌入图片"环节。
+> `asset_fetcher` 子模块，集成在"配图提取 → 嵌入 Markdown"环节。
 > 配套 CLI 工具：`scripts/asset_fetcher.py`（带 `curl` / `extract` / `list-cdns` / `screenshot` 子命令）
 
 ## 黄金顺序（按优先级尝试）
@@ -128,9 +128,9 @@ python3 scripts/asset_fetcher.py curl \
 - **不要 PIL 缩放** — 直接拿 2× DPR 原图；想"压缩"改 jpg q=95 + sips
 - **PNG optimize 在大图上会 hang** — 改用 sips 转 jpg，或直接无损 PNG
 
-## 为什么这是 ai-daily-hotspot-xhs 的子模块而不是独立 skill
+## 为什么作为子模块集成在 skill 内
 
-配图提取 100% 服务于"AI 热点日报"流程的"写稿 → 嵌入"环节。单独建 skill 反而割裂了工作流（caller 要手动选 skill + 切上下文）。集成进来让 AI 一次跑完整个日报流水线：
+配图提取 100% 服务于"AI 热点日报"流程的"写稿 → 嵌入"环节。单独拆 skill 反而割裂了工作流（caller 要手动选 skill + 切上下文）。集成进来让 AI 一次跑完整个日报流水线：
 
 ```
 collect_ai_hotspots.py  →  候选池

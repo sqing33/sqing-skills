@@ -2,7 +2,7 @@
 """
 asset-fetcher — 为 AI 模型/产品报道提取首手配图
 
-集成在 ai-daily-hotspot-xhs skill 的"配图"环节。支持三种工作流（按优先级）:
+`asset_fetcher` 子模块，集成在"配图提取 → 嵌入 Markdown"环节。支持三种工作流（按优先级）:
 
   1. curl 直接下载公开 CDN/图床上的高分辨率原始资源
   2. web_fetch 抓 HTML/JSON/Markdown，从内嵌资源中提取图片 URL 再 curl
@@ -22,7 +22,7 @@ CLI 入口:
 依赖:
   - python3 (标准库即可,无第三方依赖)
   - bash + curl (Linux/macOS)
-  - 内嵌 Browser 截图走 Mavis control-in-app-browser skill
+  - 内嵌 Browser 截图走 control-in-app-browser skill
 """
 import argparse
 import json

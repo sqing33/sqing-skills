@@ -1,6 +1,6 @@
 ---
 name: ai-daily-news
-description: 聚合开放 RSS、Atom 和 JSON API 中的最新 AI 热点，覆盖官方发布、行业新闻、模型、论文与开源项目。脚本只负责收集、规范化、去重，不过滤任何内容；所有选题、评分和优先级排序由 AI 分析师完成。再用 HTTP 优先、内嵌 `control-in-app-browser` skill 兜底的服务端流程解析跳转、定位一手来源、提取正文和图片线索（通过 `asset_fetcher` 子模块支持 curl 直链 / web_fetch grep / Browser 截图三种工作流），生成每日 7–10 条聚合新闻文档用于查看；支持 Linux、Docker、CI 和定时任务，不依赖桌面浏览器。只有用户明确提供 B 站 UP、BV 号或要求 B 站时才启用可选 B 站采集。
+description: 聚合开放 RSS、Atom 和 JSON API 中的最新 AI 热点，覆盖官方发布、行业新闻、模型、论文与开源项目。脚本只负责收集、规范化、去重，不过滤任何内容；所有选题、评分和优先级排序由 AI 分析师完成。再用 HTTP 优先、内嵌 `control-in-app-browser` skill 兜底的服务端流程解析跳转、定位一手来源、提取正文和图片线索（通过 `asset_fetcher` 子模块支持 curl 直链 / web_fetch grep / Browser 截图三种工作流），生成每日 7–10 条聚合新闻文档用于查看；支持 Linux、Docker、CI 和定时任务，不依赖桌面浏览器。
 ---
 
 # 多源 AI 热点聚合新闻
@@ -34,7 +34,6 @@ python3 scripts/collect_ai_hotspots.py --language zh --format markdown
 
 - `GITHUB_TOKEN`：提高 GitHub API 限额。
 - `AI_HOTSPOT_USER_AGENT`：覆盖请求 UA。
-- `BILIBILI_COOKIE`：仅显式运行 B 站采集器时读取。
 - `BRAVE_SEARCH_API_KEY`：可选；核验时优先使用 Brave Search API，未设置则用 web_search。
 
 候选采集保持零依赖。需要解析 JS 页面、搜索证据或截图时，使用内置的 `control-in-app-browser` skill——**不需要安装 Playwright 或任何额外浏览器依赖**。
@@ -49,7 +48,7 @@ python3 scripts/collect_ai_hotspots.py --language zh --format markdown
 
 **路 A — RSS / Atom / JSON API 收集（脚本自动）**
 
-运行 `scripts/collect_ai_hotspots.py`。默认路径只请求开放 RSS、Atom 和 JSON API，不访问 B 站，也不需要浏览器。
+运行 `scripts/collect_ai_hotspots.py`。默认路径只请求开放 RSS、Atom 和 JSON API，不需要浏览器。
 
 脚本输出 JSON，检查其中的：
 
@@ -359,18 +358,7 @@ images_understand images/openrouter-top5.png           # 第五步:验证内容
 
 每条新闻写成一个完整段落：发生了什么 → 关键参数/数据 → 影响范围 → 开放方式/适用场景 → 限制或争议。
 
-公众号、媒体早报、Google News、HN、B 站简介或评论只用于发现选题和定位链接，不能作为正文素材。正文不得出现”媒体称””视频里说””其他早报提到”等表述。
-
-## 显式 B 站模式
-
-只有用户给出 UP、空间链接、BV 号、视频链接，或明确要求从 B 站采集时，才运行：
-
-```bash
-python3 scripts/collect_bili_daily_hotspots.py --up <mid-or-space-url-or-name>
-python3 scripts/collect_bili_daily_hotspots.py --video <bvid-or-video-url>
-```
-
-B 站脚本保留原有默认 UP、WBI、Cookie 和风控处理，但不要从通用采集失败自动切换到 B 站。B 站简介、评论和视频画面仍只是线索；事实与配图必须回到一手来源核验。
+公众号、媒体早报、Google News、HN、视频简介或评论只用于发现选题和定位链接，不能作为正文素材。正文不得出现”媒体称””视频里说””其他早报提到”等表述。
 
 ## 必须输出
 
@@ -412,8 +400,6 @@ B 站脚本保留原有默认 UP、WBI、Cookie 和风控处理，但不要从�
 
 **来源**：<官方 / 一手 URL>
 ```
-
-显式 B 站模式可在文档头部追加来源 UP、视频、BV 号和视频地址；通用模式不要输出这些字段。
 
 ## 格式与边界
 

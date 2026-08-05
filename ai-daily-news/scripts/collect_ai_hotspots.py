@@ -40,7 +40,7 @@ DEFAULT_HOURS = 24
 DEFAULT_LIMIT = 200
 DEFAULT_TIMEOUT = 20
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
-DEFAULT_UA = "ai-daily-hotspot-xhs/1.0 (+public RSS and JSON collector)"
+DEFAULT_UA = "ai-daily-news/1.0 (+public RSS and JSON collector)"
 SOURCE_CATALOG = Path(__file__).resolve().parent.parent / "references" / "sources.json"
 TRACKING_QUERY_KEYS = {
     "fbclid",
