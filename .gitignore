@@ -37,3 +37,9 @@ models.yaml
 .venv-reference/
 .github-feature-analyzer/
 **/output/
+
+# Packaged artifacts (built per-skill outside the repo, regenerated on demand)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
